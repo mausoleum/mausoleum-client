@@ -32,5 +32,5 @@ class AESCTR(BlockCipher):
         """
         Decrypt, then unpad, the given data with AES-CTR.
         """
-        return BlockCipher.unpad(self.decrypt(data))
+        return BlockCipher.unpad(self.cipher.decrypt(data))
     
