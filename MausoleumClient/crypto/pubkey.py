@@ -34,7 +34,8 @@ class PKCSOne(object):
         data will be hashed with SHA512.
         """
         if self.private_rsa is None:
-            raise Exception("Cannot sign given data, no private RSA key present")
+            error = "Cannot sign given data, no private RSA key present"
+            raise Exception(error)
         hasher = SHA512.new()
         hasher.update(data)
         signer = PKCS1_PSS.new(self.private_rsa)
@@ -46,7 +47,8 @@ class PKCSOne(object):
         expectations using PKCS1-PSS, with a SHA512 hash.
         """
         if self.public_rsa is None:
-            raise Exception("Cannot verify given data, no public RSA key present")
+            error = "Cannot verify given data, no public RSA key present"
+            raise Exception(error)
         hasher = SHA512.new()
         hasher.update(data)
         verifier = PKCS1_PSS.new(self.public_rsa)
@@ -57,7 +59,8 @@ class PKCSOne(object):
         Encrypt the given data with PKCS1-OAEP.
         """
         if self.public_rsa is None:
-            raise Exception("Cannot encrypt given data, no public RSA key present")
+            error = "Cannot encrypt given data, no public RSA key present"
+            raise Exception(error)
         cipher = PKCS1_OAEP.new(self.public_rsa)
         return cipher.encrypt(data)
 
@@ -66,6 +69,7 @@ class PKCSOne(object):
         Decrypt the given data with PKCS1-OAEP.
         """
         if self.private_rsa is None:
-            raise Exception("Cannot decrypt given data, no private RSA key present")
+            error = "Cannot decrypt given data, no private RSA key present"
+            raise Exception(error)
         cipher = PKCS1_OAEP.new(self.private_rsa)
         return cipher.decrypt(data)

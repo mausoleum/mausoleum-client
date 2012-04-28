@@ -5,7 +5,7 @@ Sane wrapper around Crypto.Cipher.AES in CTR mode.
 """
 
 from Crypto.Cipher import AES
-from BlockCipher import BlockCipher, BLOCK_SIZE, NONCE_SIZE
+from cipher import BlockCipher, BLOCK_SIZE, NONCE_SIZE
 
 class AESCTR(BlockCipher):
     """

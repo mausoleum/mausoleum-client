@@ -3,7 +3,8 @@ sys.path.append('..')
 
 import unittest
 
-from crypto import *
+from crypto.symmetric import AESCTR
+from crypto.cipher import BlockCipher
 
 class TestAESCTR(unittest.TestCase):
 
