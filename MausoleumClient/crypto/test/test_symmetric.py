@@ -1,10 +1,7 @@
-import sys
-sys.path.append('..')
-
 import unittest
 
-from crypto.symmetric import AESCTR
-from crypto.cipher import BlockCipher
+from MausoleumClient.crypto.symmetric import AESCTR
+from MausoleumClient.crypto.cipher import BlockCipher
 
 class TestAESCTR(unittest.TestCase):
 

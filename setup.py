@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from distutils.core import setup
+from setuptools import setup, find_packages
 
 setup(name='MausoleumClient',
       version='0.1',
@@ -8,5 +8,6 @@ setup(name='MausoleumClient',
       author='Alex Chernyakhovsky, Drew Dennison, and Patrick Hurst',
       author_email='mausoleum@mit.edu',
       url='https://github.com/mausoleum/mausoleum-client',
-      packages=['MausoleumClient', 'MausoleumClient.crypto'],
+      packages=find_packages(),
+      test_suite='MausoleumClient.crypto.test',
      )
