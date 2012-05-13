@@ -64,6 +64,14 @@ class PKCSOne(object):
         cipher = PKCS1_OAEP.new(self.public_rsa)
         return cipher.encrypt(data)
 
+    @staticmethod
+    def encryptOther(data, public_rsa):
+        """
+        Encrypt data with public_rsa and return
+        """
+        cipher = PKCS1_OAEP.new(public_rsa)
+        return cipher.encrypt(data)
+
     def decrypt(self, data):
         """
         Decrypt the given data with PKCS1-OAEP.
@@ -73,3 +81,13 @@ class PKCSOne(object):
             raise Exception(error)
         cipher = PKCS1_OAEP.new(self.private_rsa)
         return cipher.decrypt(data)
+
+    @staticmethod
+    def generate():
+        """
+        Generate and return a public, private RSA 4096 key pair
+        """
+        private = RSA.generate(4096)
+        public  = private.publickey()
+        return (public.exportKey(), private.exportKey())
+        
