@@ -37,6 +37,11 @@ def watch_for_changes(directory):
 
     notifier = pyinotify.ThreadedNotifier(wm, eh)
 
+def shardify(file_path):
+    basename = os.path.basename(file_path)
+    return  '/'+basename[0]+"/"+basename[1]+"/"+basename
+
+
 def generate_metadata(enc_data, IV, action, seq_num):
     hasher = SHA512.new()
     hasher.update(enc_data)
@@ -67,19 +72,23 @@ def new_file(file_path, seq_num, token, PKCS):
     metadata = generate_metadata(enc_data, IV, "PUT", seq_num)
     metadata_sig = PKCS.sign(metadata)
 
-    basename = os.path.basename(file_path)
-    shard = '/'+basename[0]+"/"+basename[1]+"/"+basename
-    upload(shard, enc_data, metadata, metadata_sig, token)
+    upload(shardify(file_path), enc_data, metadata, metadata_sig, token)
     
     # add key for yourself
-    enc_aes = PKCS.encrypt(AES_key)
-    sig_aes = PKCS.sign(AES_key)
-    add_key(shard, USERNAME, enc_aes, sig_aes, token)
-    return AES_key # so you can share with others
+    enc_aes = binascii.b2a_base64(PKCS.encrypt(AES_key))
+    sig_aes = binascii.b2a_base64(PKCS.sign(AES_key))
+    add_key(shardify(file_path), USERNAME, enc_aes, sig_aes, token)
+    return AES_key, IV  # so you can share with others
 
 
 def update_file(file_path):
     pass
+
+def download_file(file_path, AES_key, IV, PKCS):
+    enc_file = get(shardify(file_path), token)
+    aes = AESCTR(AES_key, IV)
+    plain_file = aes.decrypt(enc_file)
+    return plain_file
 
 
 def upload(file_path, enc_data, metadata, metadata_sig, token, user=None):
@@ -145,18 +154,20 @@ def main(root_dir):
 if __name__ == '__main__':
     # register_user('Drew Dennison', 'lolol')
     public, private = PKCSOne.generate()
-    print public
-    print private
+    # print public
+    # print private
     pkcs = PKCSOne(public, private)
 
     token =  get_token("Drew Dennison", "lolol")
-    print new_file('/tmp/testwatch', 1, token, pkcs)
+    aes_key, iv  =  new_file('/tmp/testwatch', 1, token, pkcs)
+    print download_file('/tmp/testwatch', aes_key, iv, token)
+
     # main('/tmp')
     
-    upload("/t/e/testing.pdf", "this is not encrypted data but will be soon", "all the metadata", "metadata signature", token)
-    print get("/t/e/testing.pdf", token)
-    delete("/t/e/testing.pdf", "metadata", "metadata sig", token)
+    # upload("/t/e/testing.pdf", "this is not encrypted data but will be soon", "all the metadata", "metadata signature", token)
     # print get("/t/e/testing.pdf", token)
-    print add_key("/t/e/testing.pdf", "Drew Dennison", "This is a super secret key :)", token)
-    print get_events(1136871308, token)
-    print get_key("/t/e/testing.pdf", token)
+    # delete("/t/e/testing.pdf", "metadata", "metadata sig", token)
+    # print get("/t/e/testing.pdf", token)
+    # print add_key("/t/e/testing.pdf", "Drew Dennison", "This is a super secret key :)", token)
+    # print get_events(1136871308, token)
+    # print get_key("/t/e/testing.pdf", token)
