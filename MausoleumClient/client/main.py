@@ -11,6 +11,8 @@ import binascii
 
 SERVER_URL = 'http://mausoleum.mit.edu:5000/'
 USERNAME = "Drew Dennison"
+PASSWORD = "lolol"
+
 
 class AllEventHandler(pyinotify.ProcessEvent):
 
@@ -54,6 +56,20 @@ def register_user(username, password):
     r = requests.post(SERVER_URL+'register', post_data)
     print r.status_code, r.text
     
+def loadPKCS():
+    try:
+        public = open('public.key')
+        private = open('private.key')
+    except IOError as e:
+        print "generating and saving new RSA key pair"
+        public, private = PKCSOne.generate()
+        new_public = open('public.key', 'w')
+        new_public.write(public)
+        new_public.close()
+        new_private = open('private.key', 'w')
+        new_private.write(private)
+        new_private.close()
+    return PKCSOne(public, private)
 
 def get_token(username, password):
     post_data = {"username":username, "password":password}
@@ -70,7 +86,7 @@ def new_file(file_path, seq_num, token, PKCS):
     enc_data = aes.encrypt(f.read())
 
     metadata = generate_metadata(enc_data, IV, "PUT", seq_num)
-    metadata_sig = PKCS.sign(metadata)
+    metadata_sig = binascii.b2a_base64(PKCS.sign(metadata))
 
     upload(shardify(file_path), enc_data, metadata, metadata_sig, token)
     
@@ -84,12 +100,16 @@ def new_file(file_path, seq_num, token, PKCS):
 def update_file(file_path):
     pass
 
-def download_file(file_path, AES_key, IV, PKCS):
-    enc_file = get(shardify(file_path), token)
+def download_file(file_path, AES_key, IV, good_hash, token):
+    enc_file = get(file_path, token)
+    hasher = SHA512.new()
+    hasher.update(enc_file)
+    hash512 = hasher.hexdigest()
+    if good_hash != hash512:
+        raise Exception("The file contents have been tampered with")
     aes = AESCTR(AES_key, IV)
     plain_file = aes.decrypt(enc_file)
     return plain_file
-
 
 def upload(file_path, enc_data, metadata, metadata_sig, token, user=None):
     post_data = {"path": file_path, "metadata": metadata, "metadata_signature": metadata_sig, "token": token}
@@ -123,10 +143,8 @@ def add_key(file_path, user, key, key_sig, token):
     r = requests.post(SERVER_URL+'file/key', post_data)
     r.raise_for_status()
 
-def get_key(file_path, token, user=None):
-    params = {"path": file_path,"token": token}
-    if user:
-        params['user'] = user
+def get_key(file_path, user, token):
+    params = {"path": file_path,"user": user, "token": token}
     r = requests.get(SERVER_URL+'file/key', params=params)
     r.raise_for_status()
     return r.content
@@ -135,14 +153,7 @@ def get_metadata(file_path, token):
     params = {"path": file_path,"token": token}
     r = requests.get(SERVER_URL+'file/metadata', params=params)
     r.raise_for_status()
-    return json.loads(r.text)
-
-
-
-
-
-
-
+    return json.loads(r.content)
 
 
 def main(root_dir):
@@ -150,24 +161,38 @@ def main(root_dir):
     while True:
         # code to poll the server
         pass
-    
-if __name__ == '__main__':
-    # register_user('Drew Dennison', 'lolol')
-    public, private = PKCSOne.generate()
-    # print public
-    # print private
-    pkcs = PKCSOne(public, private)
 
-    token =  get_token("Drew Dennison", "lolol")
-    aes_key, iv  =  new_file('/tmp/testwatch', 1, token, pkcs)
-    print download_file('/tmp/testwatch', aes_key, iv, token)
+def send_new_file(file_path, username, password, PKCS):
+    token =  get_token(username, password)
+    new_file(file_path, 1, token, pkcs) # 1 because the file is new
+    
+def receive_file(file_path, username, password, PKCS):
+    token =  get_token(username, password)
+    metadata = get_metadata(shardify(file_path), token)
+    signature = binascii.a2b_base64(metadata['signature'])
+    if not pkcs.verify(metadata['contents'],signature):
+        raise Exception("Metadata has been tampered with!")
+    contents = json.loads(metadata['contents'])
+
+    action  = contents['action']
+    iv  = binascii.a2b_base64(contents['iv'])
+    hash512  = contents['hash']
+    seq_num = contents['seq_num']
+
+    enc_key = binascii.a2b_base64(get_key(shardify(file_path), username, token))
+    aes_key = pkcs.decrypt(enc_key)
+
+    return download_file(shardify(file_path), aes_key, iv, hash512, token)
+
+if __name__ == '__main__':
+    # register_user(USERNAME, PASSWORD)
+    pkcs = loadPKCS()
+    
+
+    send_new_file('/tmp/testwatch', USERNAME, PASSWORD, pkcs)
+    # now download the file
+    print receive_file('/tmp/testwatch', USERNAME, PASSWORD, pkcs)
 
     # main('/tmp')
     
-    # upload("/t/e/testing.pdf", "this is not encrypted data but will be soon", "all the metadata", "metadata signature", token)
-    # print get("/t/e/testing.pdf", token)
-    # delete("/t/e/testing.pdf", "metadata", "metadata sig", token)
-    # print get("/t/e/testing.pdf", token)
-    # print add_key("/t/e/testing.pdf", "Drew Dennison", "This is a super secret key :)", token)
-    # print get_events(1136871308, token)
-    # print get_key("/t/e/testing.pdf", token)
+    
