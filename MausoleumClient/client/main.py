@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import pyinotify
 import requests
 from MausoleumClient.crypto.cipher import *
@@ -9,35 +11,51 @@ import json
 import os
 import binascii
 
-SERVER_URL = 'http://mausoleum.mit.edu:5000/'
-USERNAME = "Drew Dennison"
-PASSWORD = "lolol"
-
-
-class AllEventHandler(pyinotify.ProcessEvent):
-
-    def process_IN_CLOSE_WRITE(self, event):
-        print "CLOSE_WRITE event:", event.pathname
-
+class PTmp(pyinotify.ProcessEvent):
     def process_IN_CREATE(self, event):
-        print "CREATE event:", event.pathname
-        new_file(event.pathname)
+        print 'Uploading:', event.name
+        send_new_file(event.pathname, USERNAME, PASSWORD, PKCS)
+        try:
+            receive_file(event.pathname, USERNAME, PASSWORD, PKCS)
+            print 'File uploaded to '+SERVER_URL+' successfully'
+        except:
+            print 'Error: file was not uploaded to server:', SERVER_URL
 
     def process_IN_DELETE(self, event):
-        print "DELETE event:", event.pathname
+        print 'Deleting:', event.name
+        delete_file(event.pathname, USERNAME, PASSWORD, PKCS)
+        try:
+            receive_file(event.pathname, USERNAME, PASSWORD, PKCS)
+            print 'Error: file was not deleted from server:', SERVER_URL
+        except:
+            print 'Deleted from server'
 
     def process_IN_MODIFY(self, event):
-        print "MODIFY event:", event.pathname
+        # should be changed to use existing key instead of creating a new one like IN_CREATE
+        print 'Uploading:', event.name
+        send_new_file(event.pathname, USERNAME, PASSWORD, PKCS)
+        try:
+            receive_file(event.pathname, USERNAME, PASSWORD, PKCS)
+            print 'File uploaded to '+SERVER_URL+' successfully'
+        except:
+            print 'Error: file was not uploaded to server:', SERVER_URL
 
 def watch_for_changes(directory):
     ''' This function is given a directory and watches for changes to
     the directory. It is threaded  '''
-    wm = pyinotify.WatchManager() 
-    wm.add_watch(directory, pyinotify.ALL_EVENTS, rec=True)
-    
-    eh = AllEventHandler()
-
-    notifier = pyinotify.ThreadedNotifier(wm, eh)
+    wm = pyinotify.WatchManager()
+    mask = pyinotify.IN_DELETE | pyinotify.IN_CREATE | pyinotify.IN_MODIFY
+    notifier = pyinotify.Notifier(wm, PTmp())
+    wdd = wm.add_watch(directory, mask, rec=True)
+    while True: # should be changed to non-blocking but ok for upload testing
+        try:
+            notifier.process_events()
+            if notifier.check_events():
+                notifier.read_events()
+        except KeyboardInterrupt:
+            print 'done watching'
+            notifier.stop()
+            break
 
 def shardify(file_path):
     basename = os.path.basename(file_path)
@@ -56,7 +74,7 @@ def register_user(username, password):
     r = requests.post(SERVER_URL+'register', post_data)
     print r.status_code, r.text
     
-def loadPKCS():
+def load_PKCS():
     try:
         public = open('public.key')
         private = open('private.key')
@@ -77,7 +95,7 @@ def get_token(username, password):
     
     return json.loads(r.text)['token']
 
-def new_file(file_path, seq_num, token, PKCS):
+def new_file(file_path, seq_num, token, pkcs):
     # generate new AES key
     (AES_key, IV) = BlockCipher.generate_ivs()
     # open file
@@ -86,7 +104,7 @@ def new_file(file_path, seq_num, token, PKCS):
     enc_data = aes.encrypt(f.read())
 
     metadata = generate_metadata(enc_data, IV, "PUT", seq_num)
-    metadata_sig = binascii.b2a_base64(PKCS.sign(metadata))
+    metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
 
     upload(shardify(file_path), enc_data, metadata, metadata_sig, token)
     
@@ -158,15 +176,15 @@ def get_metadata(file_path, token):
 
 def main(root_dir):
     watch_for_changes(root_dir)
-    while True:
+    # while True:
         # code to poll the server
-        pass
+      #  pass
 
-def send_new_file(file_path, username, password, PKCS):
+def send_new_file(file_path, username, password, pkcs):
     token =  get_token(username, password)
     new_file(file_path, 1, token, pkcs) # 1 because the file is new
     
-def receive_file(file_path, username, password, PKCS):
+def receive_file(file_path, username, password, pkcs):
     token =  get_token(username, password)
     metadata = get_metadata(shardify(file_path), token)
     signature = binascii.a2b_base64(metadata['signature'])
@@ -181,18 +199,24 @@ def receive_file(file_path, username, password, PKCS):
 
     enc_key = binascii.a2b_base64(get_key(shardify(file_path), username, token))
     aes_key = pkcs.decrypt(enc_key)
-
     return download_file(shardify(file_path), aes_key, iv, hash512, token)
 
+def delete_file(file_path, username, password, pkcs):
+    token =  get_token(username, password)
+    metadata = json.dumps({"action": "DELETE"})
+    metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
+    delete(shardify(file_path), metadata, metadata_sig, token)
+
+SERVER_URL = 'http://mausoleum.mit.edu:5000/'
+USERNAME = "Drew Dennison"
+PASSWORD = "lolol"
+PKCS = load_PKCS()
+
 if __name__ == '__main__':
-    # register_user(USERNAME, PASSWORD)
-    pkcs = loadPKCS()
-    
-
-    send_new_file('/tmp/testwatch', USERNAME, PASSWORD, pkcs)
-    # now download the file
-    print receive_file('/tmp/testwatch', USERNAME, PASSWORD, pkcs)
-
-    # main('/tmp')
-    
+    # register_user(USERNAME, PASSWORD)    
+    try:
+        print receive_file('watch/test', USERNAME, PASSWORD, PKCS)
+    except:
+        print 'file "watch/test" could not be downloaded. Create a file named test under the watch folder and the next time you run this program, it will be displayed'
+    main('watch')
     
