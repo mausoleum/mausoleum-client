@@ -13,6 +13,7 @@ import binascii
 
 class PTmp(pyinotify.ProcessEvent):
     def process_IN_CREATE(self, event):
+        print event.name, 'created'
         print 'Uploading:', event.name
         send_new_file(event.pathname, USERNAME, PASSWORD, PKCS)
         try:
@@ -31,9 +32,9 @@ class PTmp(pyinotify.ProcessEvent):
             print 'Deleted from server'
 
     def process_IN_MODIFY(self, event):
-        # should be changed to use existing key instead of creating a new one like IN_CREATE
+        print event.name, 'modified'
         print 'Uploading:', event.name
-        send_new_file(event.pathname, USERNAME, PASSWORD, PKCS)
+        send_update_file(event.pathname, USERNAME, PASSWORD, PKCS)
         try:
             receive_file(event.pathname, USERNAME, PASSWORD, PKCS)
             print 'File uploaded to '+SERVER_URL+' successfully'
@@ -115,8 +116,16 @@ def new_file(file_path, seq_num, token, pkcs):
     return AES_key, IV  # so you can share with others
 
 
-def update_file(file_path):
-    pass
+def update_file(file_path, aes_key, seq_num, token, pkcs):
+    # generate new IV
+    (AES_key_do_not_use, IV) = BlockCipher.generate_ivs()
+    f = open(file_path, 'rb')
+    aes = AESCTR(aes_key, IV)
+    enc_data = aes.encrypt(f.read())
+    metadata = generate_metadata(enc_data, IV, "PUT", seq_num)
+    metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
+    upload(shardify(file_path), enc_data, metadata, metadata_sig, token)
+
 
 def download_file(file_path, AES_key, IV, good_hash, token):
     enc_file = get(file_path, token)
@@ -176,14 +185,27 @@ def get_metadata(file_path, token):
 
 def main(root_dir):
     watch_for_changes(root_dir)
-    # while True:
-        # code to poll the server
-      #  pass
+
+
+# --------------- APIs --------------------
 
 def send_new_file(file_path, username, password, pkcs):
     token =  get_token(username, password)
     new_file(file_path, 1, token, pkcs) # 1 because the file is new
     
+def send_update_file(file_path, username, password, pkcs):
+    token =  get_token(username, password)
+    enc_key = binascii.a2b_base64(get_key(shardify(file_path), username, token))
+    aes_key = pkcs.decrypt(enc_key) #should verify the key has not been tampered with
+    metadata = get_metadata(shardify(file_path), token)
+    signature = binascii.a2b_base64(metadata['signature'])
+    if not pkcs.verify(metadata['contents'],signature):
+        raise Exception("Metadata has been tampered with!")
+    contents = json.loads(metadata['contents'])
+    seq_num = int(contents['seq_num'])
+    seq_num += 1
+    update_file(file_path, aes_key, seq_num, token, pkcs)
+
 def receive_file(file_path, username, password, pkcs):
     token =  get_token(username, password)
     metadata = get_metadata(shardify(file_path), token)
@@ -206,6 +228,7 @@ def delete_file(file_path, username, password, pkcs):
     metadata = json.dumps({"action": "DELETE"})
     metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
     delete(shardify(file_path), metadata, metadata_sig, token)
+
 
 SERVER_URL = 'http://mausoleum.mit.edu:5000/'
 USERNAME = "Drew Dennison"
