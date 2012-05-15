@@ -10,6 +10,7 @@ from StringIO import StringIO
 import json
 import os
 import binascii
+import time
 
 class PTmp(pyinotify.ProcessEvent):
     def process_IN_CREATE(self, event):
@@ -41,32 +42,34 @@ class PTmp(pyinotify.ProcessEvent):
         except:
             print 'Error: file was not uploaded to server:', SERVER_URL
 
-def watch_for_changes(directory):
+def watch_for_changes(directory, sync_since):
     ''' This function is given a directory and watches for changes to
     the directory. It is threaded  '''
     wm = pyinotify.WatchManager()
     mask = pyinotify.IN_DELETE | pyinotify.IN_CREATE | pyinotify.IN_MODIFY
     notifier = pyinotify.Notifier(wm, PTmp())
     wdd = wm.add_watch(directory, mask, rec=True)
-    while True: # should be changed to non-blocking but ok for upload testing
+    last_downloaded = sync_since
+    while True: 
         try:
             notifier.process_events()
             if notifier.check_events():
                 notifier.read_events()
+            
         except KeyboardInterrupt:
             print 'done watching'
             notifier.stop()
-            break
+            return
 
 def shardify(file_path):
     basename = os.path.basename(file_path)
     return  '/'+basename[0]+"/"+basename[1]+"/"+basename
 
 
-def generate_metadata(enc_data, IV, action, seq_num):
+def generate_metadata(file_path, enc_data, IV, action, seq_num):
     hasher = SHA512.new()
     hasher.update(enc_data)
-    meta = {"hash": hasher.hexdigest(), "iv": binascii.b2a_base64(IV), "action": action, "seq_num": seq_num}
+    meta = {"path": file_path, "hash": hasher.hexdigest(), "iv": binascii.b2a_base64(IV), "action": action, "seq_num": seq_num}
     return json.dumps(meta)
 
 
@@ -104,7 +107,7 @@ def new_file(file_path, seq_num, token, pkcs):
     aes = AESCTR(AES_key, IV)
     enc_data = aes.encrypt(f.read())
 
-    metadata = generate_metadata(enc_data, IV, "PUT", seq_num)
+    metadata = generate_metadata(shardify(file_path), enc_data, IV, "PUT", seq_num)
     metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
 
     upload(shardify(file_path), enc_data, metadata, metadata_sig, token)
@@ -122,7 +125,7 @@ def update_file(file_path, aes_key, seq_num, token, pkcs):
     f = open(file_path, 'rb')
     aes = AESCTR(aes_key, IV)
     enc_data = aes.encrypt(f.read())
-    metadata = generate_metadata(enc_data, IV, "PUT", seq_num)
+    metadata = generate_metadata(shardify(file_path), enc_data, IV, "PUT", seq_num)
     metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
     upload(shardify(file_path), enc_data, metadata, metadata_sig, token)
 
@@ -182,19 +185,18 @@ def get_metadata(file_path, token):
     r.raise_for_status()
     return json.loads(r.content)
 
-
 def main(root_dir):
-    watch_for_changes(root_dir)
+    watch_for_changes(root_dir, time.time())
 
 
 # --------------- APIs --------------------
 
 def send_new_file(file_path, username, password, pkcs):
-    token =  get_token(username, password)
+    token = get_token(username, password)
     new_file(file_path, 1, token, pkcs) # 1 because the file is new
     
 def send_update_file(file_path, username, password, pkcs):
-    token =  get_token(username, password)
+    token = get_token(username, password)
     enc_key = binascii.a2b_base64(get_key(shardify(file_path), username, token))
     aes_key = pkcs.decrypt(enc_key) #should verify the key has not been tampered with
     metadata = get_metadata(shardify(file_path), token)
@@ -207,39 +209,66 @@ def send_update_file(file_path, username, password, pkcs):
     update_file(file_path, aes_key, seq_num, token, pkcs)
 
 def receive_file(file_path, username, password, pkcs):
-    token =  get_token(username, password)
-    metadata = get_metadata(shardify(file_path), token)
-    signature = binascii.a2b_base64(metadata['signature'])
-    if not pkcs.verify(metadata['contents'],signature):
-        raise Exception("Metadata has been tampered with!")
-    contents = json.loads(metadata['contents'])
-
-    action  = contents['action']
-    iv  = binascii.a2b_base64(contents['iv'])
-    hash512  = contents['hash']
-    seq_num = contents['seq_num']
-
-    enc_key = binascii.a2b_base64(get_key(shardify(file_path), username, token))
-    aes_key = pkcs.decrypt(enc_key)
-    return download_file(shardify(file_path), aes_key, iv, hash512, token)
+    token = get_token(username, password)
+    try:
+        metadata = get_metadata(shardify(file_path), token)
+        signature = binascii.a2b_base64(metadata['signature'])
+        if not pkcs.verify(metadata['contents'],signature):
+            raise Exception("Metadata has been tampered with!")
+        contents = json.loads(metadata['contents'])
+        
+        action  = contents['action']
+        iv  = binascii.a2b_base64(contents['iv'])
+        hash512  = contents['hash']
+        seq_num = contents['seq_num']
+        
+        enc_key = binascii.a2b_base64(get_key(shardify(file_path), username, token))
+        aes_key = pkcs.decrypt(enc_key)
+        file_contents = download_file(shardify(file_path), aes_key, iv, hash512, token)
+        if not os.path.exists(os.path.dirname(file_path)):
+            os.makedirs(os.path.dirname(file_path))
+        file_obj = open(file_path, 'wb')
+        file_obj.write(file_contents)
+        print 'downloaded', file_path, 'to system'
+    except:
+        print 'failed to download', shardify(file_path), 'to system'
 
 def delete_file(file_path, username, password, pkcs):
-    token =  get_token(username, password)
-    metadata = json.dumps({"action": "DELETE"})
+    token = get_token(username, password)
+    metadata = json.dumps({"action": "DELETE", "path": shardify(file_path)})
     metadata_sig = binascii.b2a_base64(pkcs.sign(metadata))
     delete(shardify(file_path), metadata, metadata_sig, token)
 
+def download_since(start_time, username, password, pkcs):
+    token = get_token(username, password)
+    events = json.loads(get_events(start_time, token))
+    contents = [json.loads(e['contents']) for e in events]
+    actions = [(d['action'], d['path']) for d in contents if 'action' in d]
+    u_actions = {}
+    for action, path in actions:
+        u_actions[path] = action
+    
+    for path, action in u_actions.items():
+        system_path = WATCH_DIR+os.sep+path[1]+os.sep+path[3]+os.sep+path[5:]
+        
+        if action  == 'PUT':
+            receive_file(system_path, username, password, pkcs) 
+        elif action == 'DELETE':
+            try:
+                os.remove(system_path)
+                print 'deleting', system_path, 'from system'
+            except:
+                print 'failed to delete',system_path, 'from system'
+        
 
 SERVER_URL = 'http://mausoleum.mit.edu:5000/'
 USERNAME = "Drew Dennison"
 PASSWORD = "lolol"
 PKCS = load_PKCS()
+WATCH_DIR = 'watch'
 
 if __name__ == '__main__':
     # register_user(USERNAME, PASSWORD)    
-    try:
-        print receive_file('watch/test', USERNAME, PASSWORD, PKCS)
-    except:
-        print 'file "watch/test" could not be downloaded. Create a file named test under the watch folder and the next time you run this program, it will be displayed'
-    main('watch')
+    download_since(1337080822.0, USERNAME, PASSWORD, PKCS) # this time only shows events of the correct format
+    main(WATCH_DIR)
     
